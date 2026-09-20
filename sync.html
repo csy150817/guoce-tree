@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><title>sync</title></head>
+<body style="font-family:sans-serif;padding:20px">
+<h3>国策树数据同步</h3>
+<pre id="out" style="background:#f4f4f4;padding:10px;max-height:60vh;overflow:auto">step 1/4: reading localStorage...</pre>
+<script>
+const out = document.getElementById('out');
+function log(msg){ out.textContent = msg; }
+const KEY = 'focus-tree-project';
+
+async function run(){
+  // 1. dump
+  const raw = localStorage.getItem(KEY);
+  if(!raw){ log('ERROR: no data in localStorage'); return; }
+  await fetch('http://127.0.0.1:8766/', {method:'POST', body: raw});
+  log('step 2/4: workspace sent ('+raw.length+' chars). waiting for patch...');
+  // 2. poll for patch
+  let patch = null;
+  for(let i=0;i<60;i++){
+    try{
+      const r = await fetch('http://127.0.0.1:8766/patch.json?n='+Date.now());
+      if(r.ok){ patch = await r.json(); break; }
+    }catch(e){}
+    await new Promise(s=>setTimeout(s,2000));
+  }
+  if(!patch){ log('TIMEOUT waiting for patch'); return; }
+  // 3. apply patch
+  const ws = JSON.parse(raw);
+  const tree = ws.trees[ws.activeTreeId];
+  const summary = [];
+  for(const op of patch.ops){
+    if(op.type==='rename'){
+      const n = tree.nodes.find(x=>x.id===op.id);
+      if(n){ n.data = n.data||{}; n.data.title = op.title; summary.push('renamed '+op.title); }
+    } else if(op.type==='add'){
+      tree.nodes.push(op.node);
+      tree.edges.push(op.edge);
+      summary.push('added '+op.node.data.title);
+    }
+  }
+  localStorage.setItem(KEY, JSON.stringify(ws));
+  log('step 3/4: patch applied:\n'+summary.join('\n')+'\n\nstep 4/4: returning to app...');
+  await new Promise(s=>setTimeout(s,800));
+  location.href = 'http://localhost:5173/';
+}
+run();
+</script>
+</body></html>
